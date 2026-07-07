@@ -1,0 +1,63 @@
+name: DevSecOps Security Pipeline
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  security-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      # 1. GitLeaks Scan
+      - name: Run GitLeaks Secret Detection
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 2. Setup Node environment & Install Dependencies
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - name: Install dependencies
+        run: npm ci
+
+      # 3. Semgrep SAST Scan
+      - name: Run Semgrep SAST
+        run: |
+          pip install semgrep
+          semgrep ci --config=auto
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+      # 4. OWASP Dependency-Check Software Composition Analysis (SCA)
+      - name: Run OWASP Dependency-Check
+        uses: dependency-check/Dependency-Check_Action@main
+        with:
+          project: 'topic-7-devsecops-pipelines'
+          path: '.'
+          format: 'HTML'
+          out: 'dependency-check-report'
+
+      # 5. Docker Image Build
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build Application Image
+        run: docker build -t node-app:latest .
+
+      # 6. Trivy Container Vulnerability Scan
+      - name: Run Trivy Container Vulnerability Scan
+        run: |
+          # Install Trivy
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
+          # Run Trivy Scan gating on CRITICAL severity CVEs
+          trivy image --exit-code 1 --severity CRITICAL node-app:latest
